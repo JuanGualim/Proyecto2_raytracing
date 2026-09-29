@@ -5,7 +5,8 @@ use diorama::image_io;
 use diorama::math::{Ray, Vec3};
 use diorama::parallel::{self, FrameStats};
 use diorama::renderer::RenderSettings;
-use diorama::scene::Scene;
+use diorama::scene::{self, Scene};
+use diorama::terrain::{self, TerrainParams};
 use diorama::texture_gen::AssetSource;
 use diorama::world::dda;
 use std::path::{Path, PathBuf};
@@ -145,12 +146,22 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     Ok(opts)
 }
 
-fn build_scene(_opts: &Options) -> std::io::Result<Scene> {
-    Scene::demo(&AssetSource::Directory(PathBuf::from("assets")))
+fn build_scene(opts: &Options) -> std::io::Result<Scene> {
+    let params = TerrainParams {
+        seed: opts.seed,
+        ..TerrainParams::default()
+    };
+    let (grid, _) = terrain::generate(&params);
+    Scene::from_grid(
+        grid,
+        &AssetSource::Directory(PathBuf::from("assets")),
+        scene::sunset_sun(),
+        256,
+    )
 }
 
 fn default_camera() -> Camera {
-    Camera::new(Vec3::new(6.0, 2.0, 6.0), 2.4, 0.45, 19.0)
+    Camera::new(Vec3::new(16.0, 11.0, 16.0), 0.6, 0.42, 44.0)
 }
 
 fn still_camera(opts: &Options) -> Camera {
@@ -246,7 +257,7 @@ fn run_bench(scene: &Scene, opts: &Options) {
     // DDA vs fuerza bruta: solo rayos primarios, escena de demostración pequeña.
     let small = Scene::demo(&AssetSource::Generated).expect("escena de demostración");
     let (w, h) = (320, 180);
-    let frame = default_camera().frame(w, h);
+    let frame = Camera::new(Vec3::new(6.0, 2.0, 6.0), 2.4, 0.45, 19.0).frame(w, h);
     let rays: Vec<Ray> = (0..w * h)
         .map(|i| frame.ray((i % w) as f32 + 0.5, (i / w) as f32 + 0.5))
         .collect();
