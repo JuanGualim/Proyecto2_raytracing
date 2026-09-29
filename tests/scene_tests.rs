@@ -84,3 +84,10 @@ fn scene_has_fog_and_sky_based_ambient() {
     let s = scene.skybox.average;
     assert!((a.x / s.x - a.z / s.z).abs() < 1e-4);
 }
+
+#[test]
+fn island_is_a_few_thousand_cubes() {
+    let n = island().grid.solid_cells().count();
+    println!("cubos en la isla: {n}");
+    assert!(n > 2000, "la isla tiene solo {n} cubos");
+}

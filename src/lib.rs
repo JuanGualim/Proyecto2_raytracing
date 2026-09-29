@@ -1,5 +1,6 @@
 //! Raytracer por CPU de un diorama de vóxeles, solo con la biblioteca estándar.
 
+pub mod animation;
 pub mod camera;
 pub mod color;
 pub mod image_io;

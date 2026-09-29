@@ -1,5 +1,6 @@
 //! Punto de entrada: parseo de argumentos, presets y orquestación del render.
 
+use diorama::animation::Animation;
 use diorama::camera::Camera;
 use diorama::image_io;
 use diorama::math::{Ray, Vec3};
@@ -221,9 +222,9 @@ fn run_animation(scene: &Scene, opts: &Options) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let total = Instant::now();
     let mut rendered = 0u32;
+    let anim = Animation::new(opts.frames, &scene.landmarks);
     for f in opts.start..opts.frames {
-        let mut cam = default_camera(scene);
-        cam.yaw += std::f32::consts::TAU * f as f32 / opts.frames as f32;
+        let cam = anim.camera(f);
         let (img, stats) = parallel::render_frame(scene, &cam, &opts.settings, f, opts.threads);
         let path = dir.join(format!("frame_{f:04}.bmp"));
         image_io::save(&path, &img)?;
