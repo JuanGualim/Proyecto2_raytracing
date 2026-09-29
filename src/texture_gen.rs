@@ -51,7 +51,8 @@ pub const TEXTURE_NAMES: [&str; tex::COUNT] = [
 pub enum AssetSource {
     /// Todo se genera en memoria, sin tocar el disco (tests).
     Generated,
-    /// Se cargan los BMP de esta carpeta; los que falten se generan y se exportan ahí.
+    /// Carpeta raíz de assets: las texturas van en `textures/` y el cielo en `skybox/`.
+    /// Se cargan los BMP existentes; los que falten se generan y se exportan ahí.
     Directory(PathBuf),
 }
 
@@ -394,7 +395,9 @@ pub fn load_textures(source: &AssetSource) -> io::Result<Vec<Texture>> {
     for (id, name) in TEXTURE_NAMES.iter().enumerate() {
         let img = match source {
             AssetSource::Generated => generate_image(id),
-            AssetSource::Directory(dir) => load_or_create(dir, name, || generate_image(id))?.0,
+            AssetSource::Directory(root) => {
+                load_or_create(&root.join("textures"), name, || generate_image(id))?.0
+            }
         };
         textures.push(Texture::from_image(&img, color_space(id)));
     }

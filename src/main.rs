@@ -7,10 +7,14 @@ use diorama::texture_gen::AssetSource;
 use std::path::{Path, PathBuf};
 
 fn main() -> std::io::Result<()> {
-    let scene = Scene::demo(&AssetSource::Directory(PathBuf::from("assets/textures")))?;
-    let cam = Camera::new(Vec3::new(6.0, 2.0, 6.0), 2.4, 0.5, 19.0);
-    let img = renderer::render(&scene, &cam, &RenderSettings::default());
-    image_io::save(Path::new("out/fase3_materiales.bmp"), &img)?;
-    println!("Escrito out/fase3_materiales.bmp");
+    let scene = Scene::demo(&AssetSource::Directory(PathBuf::from("assets")))?;
+    let cam = Camera::new(Vec3::new(6.0, 2.0, 6.0), 2.4, 0.4, 19.0);
+    let settings = RenderSettings {
+        max_depth: 4,
+        ..RenderSettings::default()
+    };
+    let img = renderer::render(&scene, &cam, &settings);
+    image_io::save(Path::new("out/fase4_reflejos.bmp"), &img)?;
+    println!("Escrito out/fase4_reflejos.bmp");
     Ok(())
 }

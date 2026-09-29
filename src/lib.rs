@@ -8,6 +8,8 @@ pub mod material;
 pub mod math;
 pub mod renderer;
 pub mod scene;
+pub mod shading;
+pub mod skybox;
 pub mod texture;
 pub mod texture_gen;
 pub mod world;
