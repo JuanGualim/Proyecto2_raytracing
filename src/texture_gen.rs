@@ -4,6 +4,7 @@
 //! se carga en lugar de regenerarse, así el usuario puede dibujar las suyas.
 
 use crate::image_io::{bmp, Image};
+use crate::math::Vec3;
 use crate::texture::{ColorSpace, Texture};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -26,7 +27,8 @@ pub mod tex {
     pub const GLOWSTONE: usize = 10;
     pub const SAND: usize = 11;
     pub const LEAVES: usize = 12;
-    pub const COUNT: usize = 13;
+    pub const STONE_NORMAL: usize = 13;
+    pub const COUNT: usize = 14;
 }
 
 /// Nombre de archivo (sin extensión) de cada textura.
@@ -44,7 +46,11 @@ pub const TEXTURE_NAMES: [&str; tex::COUNT] = [
     "glowstone",
     "sand",
     "leaves",
+    "stone_normal",
 ];
+
+/// Intensidad del relieve al convertir alturas en normales.
+pub const NORMAL_STRENGTH: f32 = 1.6;
 
 /// De dónde salen las texturas y el skybox.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,7 +65,7 @@ pub enum AssetSource {
 /// Los datos (alturas, normales) no llevan corrección de gamma.
 pub fn color_space(id: usize) -> ColorSpace {
     match id {
-        tex::STONE_HEIGHT => ColorSpace::Linear,
+        tex::STONE_HEIGHT | tex::STONE_NORMAL => ColorSpace::Linear,
         _ => ColorSpace::Srgb,
     }
 }
@@ -346,8 +352,51 @@ fn leaves(x: usize, y: usize) -> [u8; 3] {
     pick(&LEAVES, 0.6 * r / 0.9 + 0.4 * tile_noise(x, y, 4, 122))
 }
 
+/// Convierte un mapa de altura (`w × h`, valores en [0, 1], con wrap) en normales de
+/// espacio tangente usando el filtro Sobel. `x` sigue a la tangente (u) y `y` a la
+/// bitangente (hacia arriba en la imagen); `z` sale de la superficie.
+pub fn height_to_normals(height: &[f32], w: usize, h: usize, strength: f32) -> Vec<Vec3> {
+    let at = |x: isize, y: isize| {
+        let xx = x.rem_euclid(w as isize) as usize;
+        let yy = y.rem_euclid(h as isize) as usize;
+        height[yy * w + xx]
+    };
+    let mut out = Vec::with_capacity(w * h);
+    for y in 0..h as isize {
+        for x in 0..w as isize {
+            // Derivada horizontal (hacia la derecha) y vertical (hacia abajo en la imagen).
+            let gx = (at(x + 1, y - 1) + 2.0 * at(x + 1, y) + at(x + 1, y + 1))
+                - (at(x - 1, y - 1) + 2.0 * at(x - 1, y) + at(x - 1, y + 1));
+            let gy = (at(x - 1, y + 1) + 2.0 * at(x, y + 1) + at(x + 1, y + 1))
+                - (at(x - 1, y - 1) + 2.0 * at(x, y - 1) + at(x + 1, y - 1));
+            // La bitangente apunta hacia arriba en la imagen, por eso gy cambia de signo.
+            out.push(Vec3::new(-gx * strength, gy * strength, 1.0).normalized());
+        }
+    }
+    out
+}
+
+/// Codifica normales en [-1, 1] como RGB8: `(n + 1) / 2 · 255`.
+pub fn encode_normals(normals: &[Vec3], w: usize, h: usize) -> Image {
+    Image::from_fn(w, h, |x, y| {
+        let n = normals[y * w + x];
+        let e = |c: f32| ((c * 0.5 + 0.5) * 255.0).round().clamp(0.0, 255.0) as u8;
+        [e(n.x), e(n.y), e(n.z)]
+    })
+}
+
+/// Normal map de la piedra a partir de un mapa de altura en escala de grises.
+pub fn stone_normal_from_height(height: &Image) -> Image {
+    let values: Vec<f32> = height.pixels.iter().map(|p| p[0] as f32 / 255.0).collect();
+    let normals = height_to_normals(&values, height.width, height.height, NORMAL_STRENGTH);
+    encode_normals(&normals, height.width, height.height)
+}
+
 /// Genera la imagen de la textura `id`.
 pub fn generate_image(id: usize) -> Image {
+    if id == tex::STONE_NORMAL {
+        return stone_normal_from_height(&generate_image(tex::STONE_HEIGHT));
+    }
     let f: fn(usize, usize) -> [u8; 3] = match id {
         tex::GRASS_TOP => grass_top,
         tex::GRASS_SIDE => grass_side,
@@ -390,18 +439,32 @@ pub fn load_or_create(
 }
 
 /// Obtiene todas las texturas, generándolas o cargándolas según `source`.
+///
+/// El normal map de la piedra se deriva del mapa de altura (cargado o generado) cuando no
+/// existe su propio BMP.
 pub fn load_textures(source: &AssetSource) -> io::Result<Vec<Texture>> {
-    let mut textures = Vec::with_capacity(tex::COUNT);
+    let mut images: Vec<Image> = Vec::with_capacity(tex::COUNT);
     for (id, name) in TEXTURE_NAMES.iter().enumerate() {
-        let img = match source {
-            AssetSource::Generated => generate_image(id),
-            AssetSource::Directory(root) => {
-                load_or_create(&root.join("textures"), name, || generate_image(id))?.0
+        let generate = |images: &[Image]| {
+            if id == tex::STONE_NORMAL {
+                stone_normal_from_height(&images[tex::STONE_HEIGHT])
+            } else {
+                generate_image(id)
             }
         };
-        textures.push(Texture::from_image(&img, color_space(id)));
+        let img = match source {
+            AssetSource::Generated => generate(&images),
+            AssetSource::Directory(root) => {
+                load_or_create(&root.join("textures"), name, || generate(&images))?.0
+            }
+        };
+        images.push(img);
     }
-    Ok(textures)
+    Ok(images
+        .iter()
+        .enumerate()
+        .map(|(id, img)| Texture::from_image(img, color_space(id)))
+        .collect())
 }
 
 #[cfg(test)]
@@ -435,6 +498,46 @@ mod tests {
         assert!(au.x > au.z * 2.0, "el oro debe ser amarillo");
         let s = avg(tex::STONE);
         assert!((s.x - s.y).abs() < 0.02, "la piedra debe ser gris");
+    }
+
+    #[test]
+    fn flat_height_map_gives_up_normal() {
+        let flat = vec![0.5; 16 * 16];
+        for n in height_to_normals(&flat, 16, 16, 3.0) {
+            assert!((n - Vec3::Z).length() < 1e-6);
+        }
+        // Codificada: (128, 128, 255).
+        let img = encode_normals(&[Vec3::Z], 1, 1);
+        assert_eq!(img.pixels[0], [128, 128, 255]);
+    }
+
+    #[test]
+    fn slope_tilts_normal_downhill() {
+        // Altura que crece hacia la derecha: la normal se inclina hacia -x (cuesta abajo).
+        let w = 8;
+        let ramp: Vec<f32> = (0..w * w).map(|i| (i % w) as f32 * 0.05).collect();
+        let n = height_to_normals(&ramp, w, w, 1.0)[3 * w + 3];
+        assert!(n.x < -0.1 && n.y.abs() < 1e-6 && n.z > 0.0);
+        // Altura que crece hacia abajo en la imagen: la normal se inclina hacia +y (arriba).
+        let ramp: Vec<f32> = (0..w * w).map(|i| (i / w) as f32 * 0.05).collect();
+        let n = height_to_normals(&ramp, w, w, 1.0)[3 * w + 3];
+        assert!(n.y > 0.1 && n.x.abs() < 1e-6);
+    }
+
+    #[test]
+    fn stone_normal_map_has_relief() {
+        let img = generate_image(tex::STONE_NORMAL);
+        let tex = Texture::from_image(&img, ColorSpace::Linear);
+        let tilted = tex
+            .texels
+            .iter()
+            .filter(|t| (t.z * 2.0 - 1.0) < 0.97)
+            .count();
+        assert!(tilted > 20, "el normal map de la piedra es casi plano");
+        for t in &tex.texels {
+            let n = *t * 2.0 - Vec3::ONE;
+            assert!(n.z > 0.0 && (n.length() - 1.0).abs() < 0.02);
+        }
     }
 
     #[test]

@@ -8,13 +8,13 @@ use std::path::{Path, PathBuf};
 
 fn main() -> std::io::Result<()> {
     let scene = Scene::demo(&AssetSource::Directory(PathBuf::from("assets")))?;
-    let cam = Camera::new(Vec3::new(6.0, 2.0, 6.0), 2.4, 0.4, 19.0);
+    let cam = Camera::new(Vec3::new(3.0, 2.5, 3.0), 3.6, 0.25, 9.0);
     let settings = RenderSettings {
         max_depth: 4,
         ..RenderSettings::default()
     };
     let img = renderer::render(&scene, &cam, &settings);
-    image_io::save(Path::new("out/fase4_reflejos.bmp"), &img)?;
-    println!("Escrito out/fase4_reflejos.bmp");
+    image_io::save(Path::new("out/fase5_normal_map.bmp"), &img)?;
+    println!("Escrito out/fase5_normal_map.bmp");
     Ok(())
 }

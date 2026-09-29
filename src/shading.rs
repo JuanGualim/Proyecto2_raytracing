@@ -2,7 +2,7 @@
 //!
 //! Convención: `n` es la normal orientada contra el rayo incidente (`dot(d, n) < 0`).
 
-use crate::math::Vec3;
+use crate::math::{Mat3, Vec3};
 
 /// Reflexión especular: `r = d - 2 (d·n) n`.
 #[inline]
@@ -55,9 +55,38 @@ pub fn blinn_phong(n: Vec3, l: Vec3, view: Vec3, shininess: f32) -> (f32, f32) {
     (ndl, n.dot(h).max(0.0).powf(shininess))
 }
 
+/// Marco tangente fijo (T, B, N) de la cara de un cubo con normal `n` (un eje ±X, ±Y, ±Z).
+/// `T` es la dirección en que crece `u`; `B` es la dirección en que *decrece* `v` (arriba en
+/// la imagen), igual que en `dda::face_uv`. Se devuelve como matriz de columnas (T, B, N).
+#[inline]
+pub fn tangent_frame(n: Vec3) -> Mat3 {
+    let (t, b) = if n.y > 0.5 {
+        (Vec3::X, -Vec3::Z)
+    } else if n.y < -0.5 {
+        (Vec3::X, Vec3::Z)
+    } else if n.x > 0.5 {
+        (-Vec3::Z, Vec3::Y)
+    } else if n.x < -0.5 {
+        (Vec3::Z, Vec3::Y)
+    } else if n.z > 0.5 {
+        (Vec3::X, Vec3::Y)
+    } else {
+        (-Vec3::X, Vec3::Y)
+    };
+    Mat3::from_cols(t, b, n)
+}
+
+/// Normal del normal map (texel en [0, 1]) llevada a espacio de mundo sobre la cara `n`.
+#[inline]
+pub fn perturb_normal(texel: Vec3, n: Vec3) -> Vec3 {
+    let ts = (texel * 2.0 - Vec3::ONE).normalized();
+    (tangent_frame(n) * ts).normalized()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::dda::face_uv;
 
     fn sin_between(a: Vec3, b: Vec3) -> f32 {
         a.cross(b).length()
@@ -130,6 +159,47 @@ mod tests {
         assert!((fresnel_schlick(1.0, 1.0, 1.5) - 0.04).abs() < 1e-3);
         // Monótona: más rasante, más reflexión.
         assert!(fresnel_schlick(0.2, 1.0, 1.33) > fresnel_schlick(0.8, 1.0, 1.33));
+    }
+
+    const FACES: [Vec3; 6] = [
+        Vec3::X,
+        Vec3::new(-1.0, 0.0, 0.0),
+        Vec3::Y,
+        Vec3::new(0.0, -1.0, 0.0),
+        Vec3::Z,
+        Vec3::new(0.0, 0.0, -1.0),
+    ];
+
+    #[test]
+    fn flat_normal_map_on_top_face_is_up() {
+        // Texel (0.5, 0.5, 1) = normal (0, 0, 1) en espacio tangente.
+        let flat = Vec3::new(0.5, 0.5, 1.0);
+        let n = perturb_normal(flat, Vec3::Y);
+        assert!((n - Vec3::Y).length() < 1e-6);
+        // En cualquier cara, la normal plana es la normal de la cara.
+        for f in FACES {
+            assert!((perturb_normal(flat, f) - f).length() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn tangent_frames_are_orthonormal_and_match_uv() {
+        for f in FACES {
+            let m = tangent_frame(f);
+            let [t, b, n] = m.cols;
+            assert_eq!(n, f);
+            assert!(t.dot(b).abs() < 1e-6 && t.dot(n).abs() < 1e-6);
+            // Base derecha: T × B = N.
+            assert!((t.cross(b) - n).length() < 1e-6);
+            // Moverse sobre la cara a lo largo de T aumenta u; a lo largo de B disminuye v.
+            let cell = [3, 3, 3];
+            let center = Vec3::splat(3.5) + f * 0.5;
+            let (u0, v0) = face_uv(center, cell, f);
+            let (u1, _) = face_uv(center + t * 0.2, cell, f);
+            let (_, v1) = face_uv(center + b * 0.2, cell, f);
+            assert!(u1 > u0, "cara {f:?}");
+            assert!(v1 < v0, "cara {f:?}");
+        }
     }
 
     #[test]

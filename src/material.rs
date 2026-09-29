@@ -107,6 +107,7 @@ pub fn material_table() -> Vec<Material> {
         specular: 0.30,
         shininess: 16.0,
         reflectivity: 0.05,
+        normal_map: Some(tex::STONE_NORMAL),
         ..Material::basic("Piedra", tex::STONE)
     };
     let wood = Material {
@@ -207,6 +208,7 @@ mod tests {
         assert_eq!(t[WATER as usize].ior, 1.33);
         assert_eq!(t[GLASS as usize].ior, 1.5);
         assert!(t[GOLD as usize].reflectivity >= 0.7);
+        assert_eq!(t[STONE as usize].normal_map, Some(tex::STONE_NORMAL));
         let emissive: Vec<_> = t.iter().filter(|m| m.is_emissive()).collect();
         assert_eq!(emissive.len(), 1);
         assert_eq!(emissive[0].name, "Glowstone");

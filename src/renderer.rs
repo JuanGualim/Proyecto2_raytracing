@@ -145,7 +145,18 @@ impl<'a> Tracer<'a> {
             return texel * mat.albedo * scene.lights.ambient + texel * mat.emission;
         }
 
-        let n = hit.normal;
+        let n = match mat.normal_map {
+            Some(id) => {
+                let texel = scene.textures[id].sample_nearest(hit.u, hit.v);
+                let n = shading::perturb_normal(texel, hit.normal);
+                if n.dot(hit.normal) > 0.05 {
+                    n
+                } else {
+                    hit.normal
+                }
+            }
+            None => hit.normal,
+        };
         let view = -ray.dir;
         let base = texel * mat.albedo;
         let local = self.direct_light(hit, n, view, base);
@@ -328,6 +339,26 @@ mod tests {
         assert!(c.is_finite());
         assert_eq!(scene.grid.get(7, 1, 7), WATER);
         assert!(t.rays >= 3, "reflexión + refracción: {} rayos", t.rays);
+    }
+
+    #[test]
+    fn normal_map_changes_stone_shading() {
+        let scene = demo();
+        let mut flat = demo();
+        flat.materials[STONE as usize].normal_map = None;
+        // Recorre la cara del pilar de piedra iluminada por el sol y compara.
+        let mut differs = 0;
+        for i in 0..16 {
+            let p = Vec3::new(2.0 + (i as f32 + 0.5) / 16.0, 2.5, 2.0);
+            let from = p + Vec3::new(0.0, 0.5, -3.0);
+            if (probe(&scene, from, p) - probe(&flat, from, p)).length() > 1e-3 {
+                differs += 1;
+            }
+        }
+        assert!(
+            differs > 4,
+            "solo {differs} texels cambian con el normal map"
+        );
     }
 
     #[test]
