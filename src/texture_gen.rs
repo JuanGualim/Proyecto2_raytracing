@@ -255,7 +255,7 @@ fn stone(x: usize, y: usize) -> [u8; 3] {
     let (_, _, id) = cellular(x, y, 3, 41);
     let h = stone_height_value(x, y);
     let tint = (hash3(id, 7, 43) % 3) as f32 * 8.0;
-    let g = 70.0 + 70.0 * h + tint + 10.0 * rand01(x, y, 44);
+    let g = 82.0 + 48.0 * h + tint + 8.0 * rand01(x, y, 44);
     let g = g.clamp(0.0, 255.0);
     [g as u8, g as u8, (g + 4.0).min(255.0) as u8]
 }

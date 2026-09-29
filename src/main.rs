@@ -5,8 +5,7 @@ use diorama::image_io;
 use diorama::math::{Ray, Vec3};
 use diorama::parallel::{self, FrameStats};
 use diorama::renderer::RenderSettings;
-use diorama::scene::{self, Scene};
-use diorama::terrain::{self, TerrainParams};
+use diorama::scene::{Scene, SceneConfig};
 use diorama::texture_gen::AssetSource;
 use diorama::world::dda;
 use std::path::{Path, PathBuf};
@@ -30,7 +29,9 @@ OPCIONES:
     --seed S                 Semilla del terreno
     --threads N              Número de hilos (por defecto, todos los disponibles)
     --yaw G  --pitch G       Ángulos de la cámara en grados (modo still)
-    --dist D                 Distancia de la cámara al centro (modo still)
+    --dist D                 Distancia de la cámara al objetivo (modo still)
+    --focus F                Objetivo de la cámara en modo still:
+                             island | statue | greenhouse | ruins | lake
     --bench                  Mide ms/frame con 1, 2, 4 y N hilos, y DDA vs fuerza bruta
     --help                   Muestra esta ayuda
 ";
@@ -73,6 +74,7 @@ struct Options {
     yaw: Option<f32>,
     pitch: Option<f32>,
     dist: Option<f32>,
+    focus: String,
     bench: bool,
     help: bool,
 }
@@ -97,6 +99,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
         yaw: None,
         pitch: None,
         dist: None,
+        focus: "island".into(),
         bench: false,
         help: false,
     };
@@ -123,6 +126,13 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             "--yaw" => opts.yaw = Some(parse_value(&flag, it.next())?),
             "--pitch" => opts.pitch = Some(parse_value(&flag, it.next())?),
             "--dist" => opts.dist = Some(parse_value(&flag, it.next())?),
+            "--focus" => {
+                let f: String = parse_value(&flag, it.next())?;
+                if !["island", "statue", "greenhouse", "ruins", "lake"].contains(&f.as_str()) {
+                    return Err(format!("objetivo desconocido: '{f}'"));
+                }
+                opts.focus = f;
+            }
             "--bench" => opts.bench = true,
             "--help" | "-h" => opts.help = true,
             other => return Err(format!("opción desconocida: '{other}' (usa --help)")),
@@ -147,25 +157,32 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
 }
 
 fn build_scene(opts: &Options) -> std::io::Result<Scene> {
-    let params = TerrainParams {
+    Scene::island(&SceneConfig {
         seed: opts.seed,
-        ..TerrainParams::default()
-    };
-    let (grid, _) = terrain::generate(&params);
-    Scene::from_grid(
-        grid,
-        &AssetSource::Directory(PathBuf::from("assets")),
-        scene::sunset_sun(),
-        256,
+        assets: AssetSource::Directory(PathBuf::from("assets")),
+        sky_size: 256,
+    })
+}
+
+fn default_camera(scene: &Scene) -> Camera {
+    Camera::new(
+        scene.landmarks.island_center,
+        (-125f32).to_radians(),
+        24f32.to_radians(),
+        38.0,
     )
 }
 
-fn default_camera() -> Camera {
-    Camera::new(Vec3::new(16.0, 11.0, 16.0), 0.6, 0.42, 44.0)
-}
-
-fn still_camera(opts: &Options) -> Camera {
-    let mut cam = default_camera();
+fn still_camera(scene: &Scene, opts: &Options) -> Camera {
+    let mut cam = default_camera(scene);
+    let l = &scene.landmarks;
+    cam.target = match opts.focus.as_str() {
+        "statue" => l.statue,
+        "greenhouse" => l.greenhouse,
+        "ruins" => l.ruins,
+        "lake" => l.lake,
+        _ => l.island_center,
+    };
     if let Some(y) = opts.yaw {
         cam.yaw = y.to_radians();
     }
@@ -191,7 +208,7 @@ fn report(label: &str, s: &RenderSettings, stats: &FrameStats) {
 }
 
 fn run_still(scene: &Scene, opts: &Options) -> std::io::Result<()> {
-    let cam = still_camera(opts);
+    let cam = still_camera(scene, opts);
     let (img, stats) = parallel::render_frame(scene, &cam, &opts.settings, 0, opts.threads);
     image_io::save(Path::new("out/still.bmp"), &img)?;
     image_io::save(Path::new("out/still.ppm"), &img)?;
@@ -205,7 +222,7 @@ fn run_animation(scene: &Scene, opts: &Options) -> std::io::Result<()> {
     let total = Instant::now();
     let mut rendered = 0u32;
     for f in opts.start..opts.frames {
-        let mut cam = default_camera();
+        let mut cam = default_camera(scene);
         cam.yaw += std::f32::consts::TAU * f as f32 / opts.frames as f32;
         let (img, stats) = parallel::render_frame(scene, &cam, &opts.settings, f, opts.threads);
         let path = dir.join(format!("frame_{f:04}.bmp"));
@@ -226,7 +243,7 @@ fn run_animation(scene: &Scene, opts: &Options) -> std::io::Result<()> {
 
 /// Mide ms/frame con distintos números de hilos y compara DDA contra fuerza bruta.
 fn run_bench(scene: &Scene, opts: &Options) {
-    let cam = still_camera(opts);
+    let cam = still_camera(scene, opts);
     let n = parallel::available_threads();
     let mut counts = vec![1, 2, 4, n];
     counts.sort_unstable();
@@ -364,6 +381,8 @@ mod tests {
             (Some(45.0), Some(20.0), Some(30.0))
         );
         assert!(parse_args(args("--bench")).unwrap().bench);
+        assert_eq!(parse_args(args("--focus statue")).unwrap().focus, "statue");
+        assert!(parse_args(args("--focus luna")).is_err());
         assert!(parse_args(args("--help")).unwrap().help);
     }
 

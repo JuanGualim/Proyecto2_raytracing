@@ -3,7 +3,7 @@
 
 use crate::camera::Camera;
 use crate::lighting::{self, MAX_POINT_LIGHTS, SHADOW_EPS};
-use crate::material::GRASS;
+use crate::material::{GRASS, WATER};
 use crate::math::{Ray, Vec3};
 use crate::scene::Scene;
 use crate::shading;
@@ -12,6 +12,13 @@ use crate::world::{dda, Hit, AIR};
 
 /// Contribución mínima para seguir lanzando rayos secundarios.
 pub const MIN_CONTRIBUTION: f32 = 0.01;
+
+/// Coeficientes de absorción del agua por unidad de distancia (Beer–Lambert): el rojo se
+/// absorbe más rápido, así que lo que se ve a través del lago se tiñe de azul verdoso.
+pub const WATER_ABSORPTION: Vec3 = Vec3::new(0.42, 0.13, 0.08);
+
+/// Color que el agua dispersa hacia el ojo (le da cuerpo turquesa al lago).
+pub const WATER_SCATTER: Vec3 = Vec3::new(0.03, 0.16, 0.22);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RenderSettings {
@@ -87,6 +94,12 @@ impl<'a> Tracer<'a> {
         let lights = &scene.lights;
         let origin = hit.pos + hit.normal * SHADOW_EPS;
         let mut c = lights.ambient * base;
+        // Los metales (muy reflectivos y opacos) tienen brillo especular de su color.
+        let spec_color = if mat.reflectivity >= 0.5 && !mat.is_transparent() {
+            base / base.max_component().max(1e-3)
+        } else {
+            Vec3::ONE
+        };
 
         let sun = lights.sun;
         if hit.normal.dot(sun.dir) > 0.0 {
@@ -94,7 +107,7 @@ impl<'a> Tracer<'a> {
             if diff > 0.0 {
                 let vis = self.shadow(origin, sun.dir, f32::INFINITY, None);
                 if vis > 0.0 {
-                    c += sun.color * vis * (base * diff + Vec3::splat(mat.specular * spec));
+                    c += sun.color * vis * (base * diff + spec_color * (mat.specular * spec));
                 }
             }
         }
@@ -118,7 +131,7 @@ impl<'a> Tracer<'a> {
             }
             let vis = self.shadow(origin, l, dist, Some(light.cell));
             if vis > 0.0 {
-                c += light.color * (att * vis) * (base * diff + Vec3::splat(mat.specular * spec));
+                c += light.color * (att * vis) * (base * diff + spec_color * (mat.specular * spec));
             }
         }
         c
@@ -128,9 +141,22 @@ impl<'a> Tracer<'a> {
     /// `weight` la contribución acumulada de este rayo al píxel.
     pub fn trace(&mut self, ray: &Ray, depth: u32, weight: f32) -> Vec3 {
         self.rays += 1;
-        match dda::trace(&self.scene.grid, ray, 0.0, f32::INFINITY) {
-            Some(hit) => self.shade(ray, &hit, depth, weight),
-            None => self.scene.sky(ray.dir),
+        let scene = self.scene;
+        let Some(hit) = dda::trace(&scene.grid, ray, 0.0, f32::INFINITY) else {
+            return scene.sky(ray.dir);
+        };
+        let c = self.shade(ray, &hit, depth, weight);
+        if hit.from == WATER {
+            // Dentro del agua: absorción y dispersión a lo largo del recorrido.
+            let t = WATER_ABSORPTION.map(|s| (-s * hit.t).exp());
+            c * t + WATER_SCATTER * (Vec3::ONE - t)
+        } else if hit.from == AIR && scene.fog_density > 0.0 {
+            // Neblina atmosférica: mezcla hacia el color del cielo con la distancia.
+            let d = (hit.t - scene.fog_start).max(0.0);
+            let f = 1.0 - (-scene.fog_density * d).exp();
+            c.lerp(scene.fog_color(ray.dir), f)
+        } else {
+            c
         }
     }
 
@@ -191,7 +217,7 @@ impl<'a> Tracer<'a> {
         let mut c = local * (1.0 - kr);
         if can_recurse && weight * kr > MIN_CONTRIBUTION {
             // Los reflejos de un metal se tiñen con su color.
-            let tint = Vec3::ONE.lerp(texel / texel.max_component().max(1e-3), 0.85);
+            let tint = texel / texel.max_component().max(1e-3);
             c += self.reflection(ray, hit, n, depth, weight * kr) * tint * kr;
         } else {
             c += base * scene.lights.ambient * kr;

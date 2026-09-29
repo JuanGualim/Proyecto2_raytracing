@@ -1,30 +1,72 @@
 //! Pruebas de extremo a extremo del render.
 
 use diorama::camera::Camera;
-use diorama::math::Vec3;
+use diorama::image_io::bmp;
+use diorama::material::MAIN_MATERIALS;
 use diorama::parallel;
-use diorama::renderer::RenderSettings;
-use diorama::scene::Scene;
-use diorama::texture_gen::AssetSource;
+use diorama::renderer::{self, RenderSettings};
+use diorama::scene::{Scene, SceneConfig};
+use diorama::world::AIR;
 
-fn small_settings() -> RenderSettings {
-    RenderSettings {
-        width: 64,
-        height: 36,
-        spp: 2,
-        max_depth: 4,
-        exposure: 1.0,
+fn island() -> Scene {
+    Scene::island(&SceneConfig {
+        sky_size: 32,
+        ..SceneConfig::default()
+    })
+    .unwrap()
+}
+
+/// Cámaras de órbita alrededor de la isla (tres ángulos distintos).
+fn orbit_cameras(scene: &Scene) -> Vec<Camera> {
+    [0.0f32, 120.0, 240.0]
+        .iter()
+        .map(|&yaw| {
+            Camera::new(
+                scene.landmarks.island_center,
+                yaw.to_radians(),
+                24f32.to_radians(),
+                38.0,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn all_main_materials_are_visible_to_primary_rays() {
+    let scene = island();
+    let mut seen = [false; 256];
+    for cam in orbit_cameras(&scene) {
+        for id in renderer::material_id_buffer(&scene, &cam, 160, 90) {
+            seen[id as usize] = true;
+        }
+    }
+    for m in MAIN_MATERIALS {
+        assert!(seen[m as usize], "{} no se ve", scene.material(m).name);
+    }
+}
+
+#[test]
+fn skybox_is_visible_in_orbit_frames() {
+    let scene = island();
+    for cam in orbit_cameras(&scene) {
+        let ids = renderer::material_id_buffer(&scene, &cam, 96, 54);
+        let sky = ids.iter().filter(|&&m| m == AIR).count() as f32 / ids.len() as f32;
+        assert!(sky > 0.25, "solo {:.0} % de cielo", sky * 100.0);
     }
 }
 
 #[test]
 fn render_is_identical_with_1_and_4_threads() {
-    let scene = Scene::demo(&AssetSource::Generated).unwrap();
-    let cam = Camera::new(Vec3::new(6.0, 2.0, 6.0), 2.4, 0.45, 19.0);
-    let settings = small_settings();
+    let scene = island();
+    let cam = orbit_cameras(&scene).remove(1);
+    let settings = RenderSettings {
+        width: 64,
+        height: 36,
+        spp: 2,
+        max_depth: 4,
+        exposure: 1.0,
+    };
     let (one, _) = parallel::render_frame(&scene, &cam, &settings, 5, 1);
     let (four, _) = parallel::render_frame(&scene, &cam, &settings, 5, 4);
-    let a = diorama::image_io::bmp::encode_bmp(&one);
-    let b = diorama::image_io::bmp::encode_bmp(&four);
-    assert_eq!(a, b, "las imágenes difieren byte a byte");
+    assert_eq!(bmp::encode_bmp(&one), bmp::encode_bmp(&four));
 }

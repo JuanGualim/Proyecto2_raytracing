@@ -1,11 +1,12 @@
 //! Skybox de atardecer en cubemap de 6 caras.
 //!
-//! Las caras se generan por código al iniciar (gradiente naranja-rosa-violeta y disco solar)
-//! y se exportan a `assets/skybox/<cara>.bmp`. Si esos BMP existen, se cargan en su lugar.
+//! Las caras se generan por código al iniciar (gradiente naranja-rosa-violeta, disco solar
+//! y nubes hechas con fBm) y se exportan a `assets/skybox/<cara>.bmp`. Si esos BMP existen, se cargan en su lugar.
 
 use crate::color;
 use crate::image_io::Image;
 use crate::math::{smoothstep, Vec3};
+use crate::terrain::noise::Perlin;
 use crate::texture::{ColorSpace, Texture};
 use crate::texture_gen::{self, AssetSource};
 use std::io;
@@ -64,23 +65,40 @@ pub fn face_uv_to_direction(face: usize, u: f32, v: f32) -> Vec3 {
     d.normalized()
 }
 
+/// Multiplicador HDR del cielo al muestrearlo.
+pub const SKY_INTENSITY: f32 = 1.0;
+
+/// Semilla del ruido de las nubes.
+const CLOUD_SEED: u64 = 77;
+
 /// Color lineal (en [0, 1]) del cielo de atardecer en la dirección `d`.
-pub fn sunset_color(d: Vec3, sun_dir: Vec3) -> Vec3 {
-    let horizon = Vec3::new(1.0, 0.50, 0.24);
-    let low = Vec3::new(0.95, 0.40, 0.36);
-    let mid = Vec3::new(0.58, 0.30, 0.50);
-    let zenith = Vec3::new(0.16, 0.13, 0.36);
+pub fn sunset_color(d: Vec3, sun_dir: Vec3, clouds: &Perlin) -> Vec3 {
+    let horizon = Vec3::new(1.0, 0.46, 0.18);
+    let low = Vec3::new(0.98, 0.36, 0.30);
+    let mid = Vec3::new(0.60, 0.26, 0.48);
+    let zenith = Vec3::new(0.13, 0.10, 0.33);
     let y = d.y;
     let mut c = if y >= 0.0 {
         let c = horizon.lerp(low, smoothstep(0.0, 0.14, y));
         let c = c.lerp(mid, smoothstep(0.08, 0.42, y));
         c.lerp(zenith, smoothstep(0.35, 1.0, y))
     } else {
-        let haze = Vec3::new(0.62, 0.36, 0.38);
-        let deep = Vec3::new(0.20, 0.13, 0.22);
+        // Bajo el horizonte: un mar de nubes. Las crestas se iluminan de rosa-naranja y los
+        // valles quedan violeta; más abajo todo se oscurece.
+        let t = -y;
+        let k = 1.0 / (t + 0.06);
+        let n = clouds.fbm2(d.x * k * 0.55 + 40.0, d.z * k * 0.55 - 13.0, 5, 2.0, 0.5);
+        let puff = smoothstep(-0.3, 0.35, n);
+        let flat = Vec3::new(d.x, 0.0, d.z).normalized();
+        let sun_flat = Vec3::new(sun_dir.x, 0.0, sun_dir.z).normalized();
+        let lit = 0.5 + 0.5 * flat.dot(sun_flat);
+        let crest = Vec3::new(0.95, 0.52, 0.42) * (0.55 + 0.45 * lit);
+        let valley = Vec3::new(0.30, 0.17, 0.32);
+        let sea = valley.lerp(crest, puff) * (1.0 - 0.55 * smoothstep(0.1, 0.9, t));
+        let haze = Vec3::new(0.70, 0.40, 0.40);
         horizon
-            .lerp(haze, smoothstep(0.0, 0.08, -y))
-            .lerp(deep, smoothstep(0.05, 0.8, -y))
+            .lerp(haze, smoothstep(0.0, 0.03, t))
+            .lerp(sea, smoothstep(0.01, 0.14, t))
     };
 
     // El horizonte brilla más hacia el lado del sol.
@@ -89,6 +107,20 @@ pub fn sunset_color(d: Vec3, sun_dir: Vec3) -> Vec3 {
     let toward_sun = flat.dot(sun_flat).max(0.0).powi(3);
     let near_horizon = (1.0 - y.abs()).max(0.0).powi(6);
     c += Vec3::new(0.5, 0.22, 0.06) * (toward_sun * near_horizon);
+
+    // Nubes: fBm proyectado sobre un plano alto, alargado en una dirección y más
+    // denso a media altura. Se iluminan de naranja hacia el sol y de violeta al otro lado.
+    if d.y > 0.0 {
+        let k = 1.0 / (d.y + 0.1);
+        let n = clouds.fbm2(d.x * k * 0.8, d.z * k * 2.2, 5, 2.0, 0.5);
+        let density = smoothstep(0.0, 0.4, n)
+            * smoothstep(0.02, 0.2, d.y)
+            * (1.0 - smoothstep(0.55, 0.9, d.y));
+        let lit = d.dot(sun_dir).max(0.0).powi(2);
+        let shade = Vec3::new(0.46, 0.26, 0.42);
+        let bright = Vec3::new(1.0, 0.58, 0.40);
+        c = c.lerp(shade.lerp(bright, 0.25 + 0.75 * lit), density * 0.85);
+    }
 
     // Halo y disco solar.
     let cos = d.dot(sun_dir);
@@ -102,11 +134,12 @@ pub fn sunset_color(d: Vec3, sun_dir: Vec3) -> Vec3 {
 
 /// Genera la imagen de una cara del cubemap.
 pub fn generate_face(face: usize, size: usize, sun_dir: Vec3) -> Image {
+    let clouds = Perlin::new(CLOUD_SEED);
     Image::from_fn(size, size, |x, y| {
         let u = (x as f32 + 0.5) / size as f32;
         let v = (y as f32 + 0.5) / size as f32;
         let d = face_uv_to_direction(face, u, v);
-        color::linear_to_srgb8(sunset_color(d, sun_dir))
+        color::linear_to_srgb8(sunset_color(d, sun_dir, &clouds))
     })
 }
 
@@ -154,7 +187,7 @@ impl Skybox {
             };
             images.push(img);
         }
-        Ok(Skybox::from_images(&images, 1.25))
+        Ok(Skybox::from_images(&images, SKY_INTENSITY))
     }
 
     /// Color HDR del cielo en la dirección `dir`.
