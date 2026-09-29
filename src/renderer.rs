@@ -2,8 +2,6 @@
 //! directa, reflexión y refracción recursivas.
 
 use crate::camera::Camera;
-use crate::color;
-use crate::image_io::Image;
 use crate::lighting::{self, MAX_POINT_LIGHTS, SHADOW_EPS};
 use crate::material::GRASS;
 use crate::math::{Ray, Vec3};
@@ -210,21 +208,6 @@ impl<'a> Tracer<'a> {
         let origin = hit.pos + hit.normal * SHADOW_EPS;
         self.trace(&Ray::new(origin, dir), depth + 1, weight)
     }
-}
-
-/// Render de un solo hilo, una muestra por píxel en el centro.
-pub fn render(scene: &Scene, camera: &Camera, settings: &RenderSettings) -> Image {
-    let frame = camera.frame(settings.width, settings.height);
-    let mut tracer = Tracer::new(scene, settings.max_depth);
-    let mut img = Image::new(settings.width, settings.height);
-    for y in 0..settings.height {
-        for x in 0..settings.width {
-            let ray = frame.ray(x as f32 + 0.5, y as f32 + 0.5);
-            let c = tracer.trace(&ray, 0, 1.0);
-            img.set(x, y, color::linear_to_rgb8(c, settings.exposure));
-        }
-    }
-    img
 }
 
 /// Buffer con el id del material que ve cada rayo primario (0 = cielo).

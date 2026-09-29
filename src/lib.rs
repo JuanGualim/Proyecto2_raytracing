@@ -6,6 +6,7 @@ pub mod image_io;
 pub mod lighting;
 pub mod material;
 pub mod math;
+pub mod parallel;
 pub mod renderer;
 pub mod scene;
 pub mod shading;
