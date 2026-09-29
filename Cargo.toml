@@ -1,0 +1,22 @@
+[package]
+name = "diorama"
+version = "0.1.0"
+edition = "2021"
+description = "Raytracer por CPU de un diorama de vóxeles: isla flotante al atardecer"
+license = "MIT"
+
+# Restricción del curso: cero dependencias externas, solo la biblioteca estándar.
+[dependencies]
+
+[dev-dependencies]
+
+# Los tests en modo debug renderizan imágenes pequeñas; un poco de optimización los acelera.
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = false
