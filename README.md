@@ -8,13 +8,11 @@ El programa escribe cada frame como BMP (con un escritor propio) y el video se a
 
 ## Video
 
-<!-- VIDEO AQUÍ -->
-> **Para el autor:** sube el video y reemplaza este bloque por una de estas opciones:
->
-> - **Archivo en GitHub:** edita este README en github.com y arrastra `diorama.mp4` a esta sección. GitHub sube el archivo y genera un enlace `https://github.com/user-attachments/...` que se reproduce aquí mismo.
-> - **YouTube:** `[![Video del diorama](https://img.youtube.com/vi/ID_DEL_VIDEO/maxresdefault.jpg)](https://www.youtube.com/watch?v=ID_DEL_VIDEO)`
->
-> El video se genera con `cargo run --release -- --preset final` seguido de `scripts/make_video.sh` (ver abajo).
+
+
+https://github.com/user-attachments/assets/828d3f96-0af2-49b1-8ae4-47b2326e51f8
+
+
 
 Vista previa en baja resolución (GIF generado a partir de los frames):
 
